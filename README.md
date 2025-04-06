@@ -1,7 +1,8 @@
-LoRA Tag Loader for ComfyUI
+LoRA Tag Loader for ComfyUI - WANVideo
 =======
 ### A <a href="https://github.com/comfyanonymous/ComfyUI" >ComfyUI</a> custom node to read LoRA tag(s) from text and load it into checkpoint model.
 
+This repository is based on the work of badjeff - and just extends it to work with WAN Video
 
 ## **Examples:**  
 The custom node shall extract "_**&lt;lora:CroissantStyle:0.8&gt;**_" from positive prompt and output a merged checkpoint model to sampler. The lora tag(s) shall be stripped from output STRING, which can be forwarded to CLIP Text Encoder.
