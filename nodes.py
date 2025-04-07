@@ -47,13 +47,17 @@ class WanVideoLoraTagLoader:
         if prev_lora is not None:
             loras_list.extend(prev_lora)
 
+        print(f"Current founds: {founds}")
+        print(f"Current File List: {loras_list}")
+
         lora_files = folder_paths.get_filename_list("loras")
         lora_files_lower = [f.lower() for f in lora_files]
         lora_dir = folder_paths.get_folder_paths("loras")[0]
 
         for name, strength in founds:
             name_lower = name.lower()
-            lora_index = next((i for i, f in enumerate(lora_files_lower) if f.startswith(name_lower)), None)
+            # Look for files that contain _{name_lower} after an underscore
+            lora_index = next((i for i, f in enumerate(lora_files_lower) if f"_{name_lower}" in f), None)
             lora_name = lora_files[lora_index] if lora_index is not None else None
 
             if lora_name is None:
