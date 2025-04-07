@@ -105,16 +105,7 @@ class WanVideoLoraTagLoader:
             print(f"[WanVideoLoraTagLoader] Failed to download {model_name}: {e}")
             return None
 
-
-NODE_CLASS_MAPPINGS = {
-    "WanVideoLoraTagLoader": WanVideoLoraTagLoader,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "WanVideoLoraTagLoader": "WAN Load LoRA Tag",
-}
-
-class WanVideoTextEncode:
+class WanVideoDynamicTextEncode:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -212,4 +203,15 @@ class WanVideoTextEncode:
             weights[text] = float(weight)
 
         return cleaned_prompt, weights
+
+
+NODE_CLASS_MAPPINGS = {
+    "WanVideoLoraTagLoader": WanVideoLoraTagLoader,
+    "WanVideoDynamicTextEncode" : WanVideoDynamicTextEncode
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "WanVideoLoraTagLoader": "WANVideo Auto-Load LoRA Tags",
+    "WanVideoDynamicTextEncode" : "WanVideo Dynamic Text Encoder"
+}
 
