@@ -9,6 +9,14 @@ CIVITAI_URL = "https://civitai.com/api/download/models"
 # Support both CIVITAI_API_KEY and civitai_token as ENV vars
 CIVITAI_API_KEY = os.environ.get("CIVITAI_API_KEY") or os.environ.get("civitai_token")
 
+import os
+import re
+import requests
+from pathlib import Path
+import folder_paths
+
+CIVITAI_API_KEY = os.environ.get("CIVITAI_API_KEY") or os.environ.get("civitai_token")
+
 class WanVideoLoraTagLoader:
     def __init__(self):
         self.tag_pattern = r"<lora:([\w\-\.]+)(?::([\d\.]+))?>"
@@ -40,10 +48,14 @@ class WanVideoLoraTagLoader:
             loras_list.extend(prev_lora)
 
         lora_files = folder_paths.get_filename_list("loras")
+        lora_files_lower = [f.lower() for f in lora_files]
         lora_dir = folder_paths.get_folder_paths("loras")[0]
 
         for name, strength in founds:
-            lora_name = next((f for f in lora_files if f.startswith(name)), None)
+            name_lower = name.lower()
+            lora_index = next((i for i, f in enumerate(lora_files_lower) if f.startswith(name_lower)), None)
+            lora_name = lora_files[lora_index] if lora_index is not None else None
+
             if lora_name is None:
                 print(f"[WanVideoLoraTagLoader] Trying to download {name} from Civitai...")
                 lora_name = self.download_lora_from_civitai(name, lora_dir)
@@ -84,22 +96,26 @@ class WanVideoLoraTagLoader:
                 return None
 
             # Grab latest version and file
-            model_id = data['items'][0]['modelVersions'][0]['id']
-            files = data['items'][0]['modelVersions'][0]['files']
+            model = data['items'][0]
+            model_version = model['modelVersions'][0]
+            model_id = model['id']
+            files = model_version['files']
             safetensor = next((f for f in files if f['name'].endswith(".safetensors")), None)
             if safetensor is None:
                 return None
 
+            filename = f"{model_id}_{safetensor['name']}"
             file_url = safetensor['downloadUrl']
-            out_path = Path(lora_dir) / safetensor['name']
+            out_path = Path(lora_dir) / filename
+
             with requests.get(file_url, stream=True, headers=headers) as resp:
                 resp.raise_for_status()
                 with open(out_path, 'wb') as f:
                     for chunk in resp.iter_content(chunk_size=8192):
                         f.write(chunk)
 
-            print(f"[WanVideoLoraTagLoader] Downloaded {safetensor['name']} to {out_path}")
-            return safetensor['name']
+            print(f"[WanVideoLoraTagLoader] Downloaded {filename} to {out_path}")
+            return filename
 
         except Exception as e:
             print(f"[WanVideoLoraTagLoader] Failed to download {model_name}: {e}")
@@ -211,7 +227,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "WanVideoLoraTagLoader": "WANVideo Auto-Load LoRA Tags",
+    "WanVideoLoraTagLoader": "WanVideo Auto-Load LoRA Tags",
     "WanVideoDynamicTextEncode" : "WanVideo Dynamic Text Encoder"
 }
 
