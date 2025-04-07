@@ -19,7 +19,8 @@ CIVITAI_API_KEY = os.environ.get("CIVITAI_API_KEY") or os.environ.get("civitai_t
 
 class WanVideoLoraTagLoader:
     def __init__(self):
-        self.tag_pattern = r"<lora:([\w\-\.]+)(?::([\d\.]+))?>"
+        # Allow spaces and special chars like ':' in LoRA names
+        self.tag_pattern = r"<lora:([^:>]+)(?::([\d\.]+))?>"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -42,22 +43,21 @@ class WanVideoLoraTagLoader:
 
     def parse_and_load(self, text, prev_lora=None, blocks=None, low_mem_load=False):
         founds = re.findall(self.tag_pattern, text)
+        print(f"[WanVideoLoraTagLoader] Current founds: {founds}")
+
         loras_list = []
 
         if prev_lora is not None:
             loras_list.extend(prev_lora)
 
-        print(f"Current founds: {founds}")
-        print(f"Current File List: {loras_list}")
-
         lora_files = folder_paths.get_filename_list("loras")
         lora_files_lower = [f.lower() for f in lora_files]
         lora_dir = folder_paths.get_folder_paths("loras")[0]
+        print(f"[WanVideoLoraTagLoader] Current File List: {lora_dir}, {lora_files_lower}")
 
         for name, strength in founds:
-            name_lower = name.lower()
-            # Look for files that contain _{name_lower} after an underscore
-            lora_index = next((i for i, f in enumerate(lora_files_lower) if f"_{name_lower}" in f), None)
+            name_lower = name.lower().strip()
+            lora_index = next((i for i, f in enumerate(lora_files_lower) if f"_{name_lower}" in f or f.startswith(name_lower)), None)
             lora_name = lora_files[lora_index] if lora_index is not None else None
 
             if lora_name is None:
@@ -83,12 +83,10 @@ class WanVideoLoraTagLoader:
             loras_list.append(lora_entry)
 
         cleaned_text = re.sub(self.tag_pattern, "", text).strip()
-
         return (loras_list, cleaned_text)
 
     def download_lora_from_civitai(self, model_name, lora_dir):
         try:
-            # Search Civitai for the model
             search_url = f"https://civitai.com/api/v1/models?query={model_name}&types=LORA"
             headers = {"Authorization": f"Bearer {CIVITAI_API_KEY}"} if CIVITAI_API_KEY else {}
             r = requests.get(search_url, headers=headers)
@@ -99,7 +97,6 @@ class WanVideoLoraTagLoader:
             if not data['items']:
                 return None
 
-            # Grab latest version and file
             model = data['items'][0]
             model_version = model['modelVersions'][0]
             model_id = model['id']
