@@ -57,7 +57,7 @@ class WanVideoLoraTagLoader:
 
         for name, strength in founds:
             name_lower = name.lower().strip()
-            lora_index = next((i for i, f in enumerate(lora_files_lower) if f"_{name_lower}" in f or f.startswith(name_lower)), None)
+            lora_index = next((i for i, f in enumerate(lora_files_lower) if name_lower in f), None)
             lora_name = lora_files[lora_index] if lora_index is not None else None
 
             if lora_name is None:
@@ -75,7 +75,7 @@ class WanVideoLoraTagLoader:
             lora_entry = {
                 "path": folder_paths.get_full_path("loras", lora_name),
                 "strength": weight,
-                "name": lora_name.split(".")[0],
+                "name": name.strip(),
                 "blocks": blocks,
                 "low_mem_load": low_mem_load,
             }
@@ -100,12 +100,14 @@ class WanVideoLoraTagLoader:
             model = data['items'][0]
             model_version = model['modelVersions'][0]
             model_id = model['id']
+            model_name_safe = model['name'].replace(" ", "_").replace("/", "_")
             files = model_version['files']
             safetensor = next((f for f in files if f['name'].endswith(".safetensors")), None)
             if safetensor is None:
                 return None
 
-            filename = f"{model_id}_{safetensor['name']}"
+            # Use sanitized model name for filename
+            filename = f"{model_id}_{model_name_safe}.safetensors"
             file_url = safetensor['downloadUrl']
             out_path = Path(lora_dir) / filename
 
