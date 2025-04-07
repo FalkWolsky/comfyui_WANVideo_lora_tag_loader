@@ -113,3 +113,103 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoLoraTagLoader": "WAN Load LoRA Tag",
 }
+
+class WanVideoTextEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "t5": ("WANTEXTENCODER",),
+                "positive_prompt": ("STRING", {"default": "", "multiline": True}),
+                "negative_prompt": ("STRING", {"default": "", "multiline": True})
+            },
+            "optional": {
+                "override_positive": ("STRING", {"multiline": True, "default": ""}),
+                "override_negative": ("STRING", {"multiline": True, "default": ""}),
+                "force_offload": ("BOOLEAN", {"default": True}),
+                "model_to_offload": ("WANVIDEOMODEL", {"tooltip": "Model to move to offload_device before encoding"})
+            }
+        }
+
+    RETURN_TYPES = ("WANVIDEOTEXTEMBEDS", )
+    RETURN_NAMES = ("text_embeds",)
+    FUNCTION = "process"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Encodes text prompts into text embeddings. Supports prompt overrides via input nodes."
+
+    def process(self, t5, positive_prompt, negative_prompt, override_positive="", override_negative="", force_offload=True, model_to_offload=None):
+
+        import torch
+        import comfy.model_management as mm
+        import comfy.utils as log
+
+        device = mm.get_torch_device()
+        offload_device = mm.unet_offload_device()
+
+        if model_to_offload is not None:
+            log.info(f"Moving video model to {offload_device}")
+            model_to_offload.model.to(offload_device)
+            mm.soft_empty_cache()
+
+        encoder = t5["model"]
+        dtype = t5["dtype"]
+
+        # Apply override if given
+        if override_positive.strip():
+            positive_prompt = override_positive
+        if override_negative.strip():
+            negative_prompt = override_negative
+
+        # Split positive prompts and process each with weights
+        positive_prompts_raw = [p.strip() for p in positive_prompt.split('|')]
+        positive_prompts = []
+        all_weights = []
+
+        for p in positive_prompts_raw:
+            cleaned_prompt, weights = self.parse_prompt_weights(p)
+            positive_prompts.append(cleaned_prompt)
+            all_weights.append(weights)
+
+        encoder.model.to(device)
+
+        with torch.autocast(device_type=mm.get_autocast_device(device), dtype=dtype, enabled=True):
+            context = encoder(positive_prompts, device)
+            context_null = encoder([negative_prompt], device)
+
+            # Apply weights to embeddings if any were extracted
+            for i, weights in enumerate(all_weights):
+                for text, weight in weights.items():
+                    log.info(f"Applying weight {weight} to prompt: {text}")
+                    if len(weights) > 0:
+                        context[i] = context[i] * weight
+
+        if force_offload:
+            encoder.model.to(offload_device)
+            mm.soft_empty_cache()
+
+        prompt_embeds_dict = {
+            "prompt_embeds": context,
+            "negative_prompt_embeds": context_null,
+        }
+        return (prompt_embeds_dict,)
+
+    def parse_prompt_weights(self, prompt):
+        """Extract text and weights from prompts with (text:weight) format"""
+        import re
+
+        # Parse all instances of (text:weight) in the prompt
+        pattern = r'\((.*?):([\d\.]+)\)'
+        matches = re.findall(pattern, prompt)
+
+        # Replace each match with just the text part
+        cleaned_prompt = prompt
+        weights = {}
+
+        for match in matches:
+            text, weight = match
+            orig_text = f"({text}:{weight})"
+            cleaned_prompt = cleaned_prompt.replace(orig_text, text)
+            weights[text] = float(weight)
+
+        return cleaned_prompt, weights
+
