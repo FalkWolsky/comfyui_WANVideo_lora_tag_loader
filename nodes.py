@@ -108,12 +108,34 @@ class WanVideoLoraTagLoader:
             if safetensor is None:
                 return None
 
-            # Save metadata file
-            metadata_filename = f"{model_id}.civitai.metadata.json"
+            # Create standard metadata structure
+            standard_metadata = {
+                "file_name": f"{model_id}_{model_name_safe}",
+                "model_name": f"{model_id}_{model_name_safe}",
+                "file_path": str(Path(lora_dir) / f"{model_id}_{model_name_safe}.safetensors"),
+                "size": safetensor.get('sizeKB', 0) * 1024,  # Convert KB to bytes
+                "modified": model_version.get('updatedAt', ''),
+                "sha256": safetensor.get('hashes', {}).get('SHA256', ''),
+                "base_model": model_version.get('baseModel', 'Unknown'),
+                "preview_url": model_version.get('images', [{}])[0].get('url', '') if model_version.get('images') else '',
+                "preview_nsfw_level": model.get('nsfwLevel', 0),
+                "usage_tips": {
+                    "description": model.get('description', ''),
+                    "trainedWords": model_version.get('trainedWords', [])
+                },
+                "notes": "",
+                "from_civitai": True,
+                "civitai": model,  # Store the full civitai response
+                "tags": model.get('tags', []),
+                "modelDescription": model.get('description', '')
+            }
+
+            # Save standard metadata file
+            metadata_filename = f"{model_id}_{model_name_safe}.metadata.json"
             metadata_path = Path(lora_dir) / metadata_filename
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 import json
-                json.dump(model, f, indent=2)
+                json.dump(standard_metadata, f, indent=2)
             print(f"[WanVideoLoraTagLoader] Saved metadata to {metadata_path}")
 
             # Use sanitized model name for filename
