@@ -6,6 +6,9 @@ import os
 import sqlite3
 from typing import List, Dict, Any
 import json
+from server import PromptServer
+from aiohttp import web
+import json as json_util
 
 CIVITAI_URL = "https://civitai.com/api/download/models"
 
@@ -349,16 +352,77 @@ class WanVideoLoraSearch:
     CATEGORY = "WanVideoWrapper"
     DESCRIPTION = "Search installed LoRAs by tags, trained words, and other criteria"
 
-    def search(self, search_type, search_terms, min_thumbs_up, max_nsfw_level, 
-              availability, sort_by, sort_order):
+    @classmethod
+    def api_route(cls):
+        async def search_api(request):
+            try:
+                data = await request.json()
+                search_instance = cls()
+                
+                # Get parameters from request with defaults
+                search_type = data.get('search_type', 'ALL')
+                search_terms = data.get('search_terms', '')
+                min_thumbs_up = int(data.get('min_thumbs_up', 0))
+                max_nsfw_level = int(data.get('max_nsfw_level', 100))
+                availability = data.get('availability', 'All')
+                sort_by = data.get('sort_by', 'THUMBS_UP')
+                sort_order = data.get('sort_order', 'DESC')
+
+                # Validate parameters
+                if search_type not in ['TAGS', 'TRAINED_WORDS', 'ALL']:
+                    raise ValueError("Invalid search_type")
+                if availability not in ['All', 'Public', 'Private']:
+                    raise ValueError("Invalid availability")
+                if sort_by not in ['THUMBS_UP', 'NSFW_LEVEL', 'NAME']:
+                    raise ValueError("Invalid sort_by")
+                if sort_order not in ['DESC', 'ASC']:
+                    raise ValueError("Invalid sort_order")
+
+                # Perform search
+                results = search_instance.search_raw(
+                    search_type=search_type,
+                    search_terms=search_terms,
+                    min_thumbs_up=min_thumbs_up,
+                    max_nsfw_level=max_nsfw_level,
+                    availability=availability,
+                    sort_by=sort_by,
+                    sort_order=sort_order
+                )
+
+                return web.json_response({
+                    "success": True,
+                    "results": results
+                })
+
+            except Exception as e:
+                return web.json_response({
+                    "success": False,
+                    "error": str(e)
+                }, status=400)
+
+        return [
+            (r"/wanvideo/lora/search", search_api, "POST"),
+        ]
+
+    def search_raw(self, search_type, search_terms, min_thumbs_up, max_nsfw_level, 
+                  availability, sort_by, sort_order):
+        """Raw search function that returns structured data instead of formatted string"""
         db = LoraMetadataDB()
         terms = [t.strip() for t in search_terms.split(',') if t.strip()]
         
         with sqlite3.connect(db.db_path) as conn:
             c = conn.cursor()
             
+            # Enhanced query to include more metadata
             query = '''
-                SELECT DISTINCT l.model_name_safe, l.nsfw_level, l.thumbs_up_count, l.availability
+                SELECT DISTINCT 
+                    l.model_name_safe,
+                    l.nsfw_level,
+                    l.thumbs_up_count,
+                    l.availability,
+                    l.model_id,
+                    GROUP_CONCAT(DISTINCT t.tag) as tags,
+                    GROUP_CONCAT(DISTINCT w.word) as trained_words
                 FROM loras l
             '''
             
@@ -403,6 +467,8 @@ class WanVideoLoraSearch:
             if where_clauses:
                 query += ' WHERE ' + ' AND '.join(where_clauses)
             
+            query += ' GROUP BY l.model_name_safe'  # Group for tag/word concatenation
+            
             sort_column = {
                 'THUMBS_UP': 'l.thumbs_up_count',
                 'NSFW_LEVEL': 'l.nsfw_level',
@@ -414,12 +480,46 @@ class WanVideoLoraSearch:
             c.execute(query, params)
             results = c.fetchall()
             
-            # Format results
-            formatted_results = []
+            # Convert to structured data
+            structured_results = []
             for row in results:
-                formatted_results.append(f"{row[0]} (👍 {row[2]}, NSFW: {row[1]}%, {row[3]})")
+                structured_results.append({
+                    "model_name": row[0],
+                    "nsfw_level": row[1],
+                    "thumbs_up": row[2],
+                    "availability": row[3],
+                    "model_id": row[4],
+                    "tags": row[5].split(',') if row[5] else [],
+                    "trained_words": row[6].split(',') if row[6] else []
+                })
             
-            return ("\n".join(formatted_results),)
+            return structured_results
+
+    def search(self, search_type, search_terms, min_thumbs_up, max_nsfw_level, 
+              availability, sort_by, sort_order):
+        """Node interface that returns formatted string"""
+        results = self.search_raw(
+            search_type=search_type,
+            search_terms=search_terms,
+            min_thumbs_up=min_thumbs_up,
+            max_nsfw_level=max_nsfw_level,
+            availability=availability,
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+        
+        # Format results for node output
+        formatted_results = []
+        for result in results:
+            formatted_results.append(
+                f"{result['model_name']} (👍 {result['thumbs_up']}, "
+                f"NSFW: {result['nsfw_level']}%, {result['availability']})"
+            )
+        
+        return ("\n".join(formatted_results),)
+
+# Register the API route
+PromptServer.instance.add_routes(WanVideoLoraSearch.api_route())
 
 NODE_CLASS_MAPPINGS = {
     "WanVideoLoraTagLoader": WanVideoLoraTagLoader,
