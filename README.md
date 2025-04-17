@@ -28,7 +28,7 @@ A ComfyUI custom node extension that provides three powerful nodes for working w
 - Flexible device management
 
 ### WanVideo LoRA Search
-- Search LoRAs by tags and trained words
+- Search in all downloaded (local) LoRAs by tags and trained words
 - Filter by NSFW level and thumbs up count
 - Sort by popularity, NSFW level, or name
 - Availability filtering (Public/Private)
