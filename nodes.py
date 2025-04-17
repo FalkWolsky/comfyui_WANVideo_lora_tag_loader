@@ -3,24 +3,97 @@ import re
 from pathlib import Path
 import requests
 import os
+import sqlite3
+from typing import List, Dict, Any
+import json
 
 CIVITAI_URL = "https://civitai.com/api/download/models"
 
 # Support both CIVITAI_API_KEY and civitai_token as ENV vars
 CIVITAI_API_KEY = os.environ.get("CIVITAI_API_KEY") or os.environ.get("civitai_token")
 
-import os
-import re
-import requests
-from pathlib import Path
-import folder_paths
+class LoraMetadataDB:
+    def __init__(self, db_path: str = "lora_metadata.db"):
+        self.db_path = db_path
+        self.init_db()
 
-CIVITAI_API_KEY = os.environ.get("CIVITAI_API_KEY") or os.environ.get("civitai_token")
+    def init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            # Create main lora table
+            c.execute('''CREATE TABLE IF NOT EXISTS loras
+                        (model_name_safe TEXT PRIMARY KEY,
+                         nsfw_level INTEGER,
+                         availability TEXT,
+                         thumbs_up_count INTEGER,
+                         model_id INTEGER)''')
+            
+            # Create tags table with many-to-many relationship
+            c.execute('''CREATE TABLE IF NOT EXISTS tags
+                        (id INTEGER PRIMARY KEY,
+                         tag TEXT UNIQUE)''')
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS lora_tags
+                        (lora_name TEXT,
+                         tag_id INTEGER,
+                         FOREIGN KEY(lora_name) REFERENCES loras(model_name_safe),
+                         FOREIGN KEY(tag_id) REFERENCES tags(id),
+                         PRIMARY KEY(lora_name, tag_id))''')
+            
+            # Create trained words table with many-to-many relationship
+            c.execute('''CREATE TABLE IF NOT EXISTS trained_words
+                        (id INTEGER PRIMARY KEY,
+                         word TEXT UNIQUE)''')
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS lora_trained_words
+                        (lora_name TEXT,
+                         word_id INTEGER,
+                         FOREIGN KEY(lora_name) REFERENCES loras(model_name_safe),
+                         FOREIGN KEY(word_id) REFERENCES trained_words(id),
+                         PRIMARY KEY(lora_name, word_id))''')
+            
+            # Create indexes for better search performance
+            c.execute('CREATE INDEX IF NOT EXISTS idx_nsfw ON loras(nsfw_level)')
+            c.execute('CREATE INDEX IF NOT EXISTS idx_thumbs ON loras(thumbs_up_count)')
+            conn.commit()
+
+    def add_lora(self, model_name_safe: str, metadata: Dict[str, Any]):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            
+            # Insert main lora data
+            c.execute('''INSERT OR REPLACE INTO loras 
+                        (model_name_safe, nsfw_level, availability, thumbs_up_count, model_id)
+                        VALUES (?, ?, ?, ?, ?)''',
+                     (model_name_safe,
+                      metadata.get('preview_nsfw_level', 0),
+                      metadata.get('civitai', {}).get('availability', 'Public'),
+                      metadata.get('civitai', {}).get('stats', {}).get('thumbsUpCount', 0),
+                      metadata.get('civitai', {}).get('id', 0)))
+            
+            # Add tags
+            for tag in metadata.get('tags', []):
+                c.execute('INSERT OR IGNORE INTO tags (tag) VALUES (?)', (tag,))
+                c.execute('SELECT id FROM tags WHERE tag = ?', (tag,))
+                tag_id = c.fetchone()[0]
+                c.execute('INSERT OR IGNORE INTO lora_tags (lora_name, tag_id) VALUES (?, ?)',
+                         (model_name_safe, tag_id))
+            
+            # Add trained words
+            for word in metadata.get('usage_tips', {}).get('trainedWords', []):
+                c.execute('INSERT OR IGNORE INTO trained_words (word) VALUES (?)', (word,))
+                c.execute('SELECT id FROM trained_words WHERE word = ?', (word,))
+                word_id = c.fetchone()[0]
+                c.execute('INSERT OR IGNORE INTO lora_trained_words (lora_name, word_id) VALUES (?, ?)',
+                         (model_name_safe, word_id))
+            
+            conn.commit()
 
 class WanVideoLoraTagLoader:
     def __init__(self):
         # Allow spaces and special chars like ':' in LoRA names
         self.tag_pattern = r"<lora:([^:>]+)(?::([\d\.]+))?>"
+        self.db = LoraMetadataDB()
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -130,11 +203,13 @@ class WanVideoLoraTagLoader:
                 "modelDescription": model.get('description', '')
             }
 
+            # Add metadata to database
+            self.db.add_lora(model_name_safe, standard_metadata)
+
             # Save standard metadata file
             metadata_filename = f"{model_id}_{model_name_safe}.metadata.json"
             metadata_path = Path(lora_dir) / metadata_filename
             with open(metadata_path, 'w', encoding='utf-8') as f:
-                import json
                 json.dump(standard_metadata, f, indent=2)
             print(f"[WanVideoLoraTagLoader] Saved metadata to {metadata_path}")
 
@@ -180,7 +255,6 @@ class WanVideoDynamicTextEncode:
     DESCRIPTION = "Encodes text prompts into text embeddings. Supports prompt overrides via input nodes."
 
     def process(self, t5, positive_prompt, negative_prompt, override_positive="", override_negative="", force_offload=True, model_to_offload=None):
-
         import torch
         import comfy.model_management as mm
         import comfy.utils as log
@@ -255,14 +329,107 @@ class WanVideoDynamicTextEncode:
 
         return cleaned_prompt, weights
 
+class WanVideoLoraSearch:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "search_type": (["TAGS", "TRAINED_WORDS", "ALL"], {"default": "ALL"}),
+                "search_terms": ("STRING", {"multiline": True}),
+                "min_thumbs_up": ("INT", {"default": 0, "min": 0}),
+                "max_nsfw_level": ("INT", {"default": 100, "min": 0, "max": 100}),
+                "availability": (["All", "Public", "Private"], {"default": "All"}),
+                "sort_by": (["THUMBS_UP", "NSFW_LEVEL", "NAME"], {"default": "THUMBS_UP"}),
+                "sort_order": (["DESC", "ASC"], {"default": "DESC"})
+            }
+        }
+    
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "search"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Search installed LoRAs by tags, trained words, and other criteria"
+
+    def search(self, search_type, search_terms, min_thumbs_up, max_nsfw_level, 
+              availability, sort_by, sort_order):
+        db = LoraMetadataDB()
+        terms = [t.strip() for t in search_terms.split(',') if t.strip()]
+        
+        with sqlite3.connect(db.db_path) as conn:
+            c = conn.cursor()
+            
+            query = '''
+                SELECT DISTINCT l.model_name_safe, l.nsfw_level, l.thumbs_up_count, l.availability
+                FROM loras l
+            '''
+            
+            params = []
+            where_clauses = []
+            
+            if terms:
+                if search_type in ['TAGS', 'ALL']:
+                    query += '''
+                        LEFT JOIN lora_tags lt ON l.model_name_safe = lt.lora_name
+                        LEFT JOIN tags t ON lt.tag_id = t.id
+                    '''
+                if search_type in ['TRAINED_WORDS', 'ALL']:
+                    query += '''
+                        LEFT JOIN lora_trained_words lw ON l.model_name_safe = lw.lora_name
+                        LEFT JOIN trained_words w ON lw.word_id = w.id
+                    '''
+                
+                search_conditions = []
+                for term in terms:
+                    if search_type in ['TAGS', 'ALL']:
+                        search_conditions.append('t.tag LIKE ?')
+                        params.append(f'%{term}%')
+                    if search_type in ['TRAINED_WORDS', 'ALL']:
+                        search_conditions.append('w.word LIKE ?')
+                        params.append(f'%{term}%')
+                
+                if search_conditions:
+                    where_clauses.append('(' + ' OR '.join(search_conditions) + ')')
+            
+            if min_thumbs_up > 0:
+                where_clauses.append('l.thumbs_up_count >= ?')
+                params.append(min_thumbs_up)
+            
+            where_clauses.append('l.nsfw_level <= ?')
+            params.append(max_nsfw_level)
+            
+            if availability != "All":
+                where_clauses.append('l.availability = ?')
+                params.append(availability)
+            
+            if where_clauses:
+                query += ' WHERE ' + ' AND '.join(where_clauses)
+            
+            sort_column = {
+                'THUMBS_UP': 'l.thumbs_up_count',
+                'NSFW_LEVEL': 'l.nsfw_level',
+                'NAME': 'l.model_name_safe'
+            }[sort_by]
+            
+            query += f' ORDER BY {sort_column} {sort_order}'
+            
+            c.execute(query, params)
+            results = c.fetchall()
+            
+            # Format results
+            formatted_results = []
+            for row in results:
+                formatted_results.append(f"{row[0]} (👍 {row[2]}, NSFW: {row[1]}%, {row[3]})")
+            
+            return ("\n".join(formatted_results),)
 
 NODE_CLASS_MAPPINGS = {
     "WanVideoLoraTagLoader": WanVideoLoraTagLoader,
-    "WanVideoDynamicTextEncode" : WanVideoDynamicTextEncode
+    "WanVideoDynamicTextEncode": WanVideoDynamicTextEncode,
+    "WanVideoLoraSearch": WanVideoLoraSearch
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoLoraTagLoader": "WanVideo Auto-Load LoRA Tags",
-    "WanVideoDynamicTextEncode" : "WanVideo Dynamic Text Encoder"
+    "WanVideoDynamicTextEncode": "WanVideo Dynamic Text Encoder",
+    "WanVideoLoraSearch": "WanVideo LoRA Search"
 }
 
