@@ -1,21 +1,71 @@
-LoRA Tag Loader for ComfyUI - WANVideo
+WanVideo LoRA Tag Loader and Dynamic Text Encoder for ComfyUI
 =======
-### A <a href="https://github.com/comfyanonymous/ComfyUI" >ComfyUI</a> custom node to read LoRA tag(s) from text and load it into checkpoint model.
 
-This repository is based on the work of badjeff - and just extends it to work with WAN Video
+A ComfyUI custom node extension that provides two powerful nodes for working with WAN Video:
+1. **WanVideo Auto-Load LoRA Tags** - Automatically loads LoRAs from text prompts
+2. **WanVideo Dynamic Text Encoder** - Advanced text encoding with prompt weighting and memory management
 
-## **Examples:**  
-The custom node shall extract "_**&lt;lora:CroissantStyle:0.8&gt;**_" from positive prompt and output a merged checkpoint model to sampler. The lora tag(s) shall be stripped from output STRING, which can be forwarded to CLIP Text Encoder.
+## Features
 
-<img src="https://github.com/badjeff/comfyui_lora_tag_loader/blob/master/workflows/workflow_sample.png" width="720">
+### WanVideo Auto-Load LoRA Tags
+- Automatically extracts and loads LoRA tags from text prompts
+- Supports multiple LoRAs in a single prompt
+- Automatic Civitai integration for downloading missing LoRAs
+- Format: `<lora:name:strength>`
 
+### WanVideo Dynamic Text Encoder
+- Advanced text encoding with prompt weighting support
+- Memory management with automatic model offloading
+- Support for prompt overrides
+- Weighted prompt syntax: `(text:weight)`
+- Multiple positive prompts support with `|` separator
+- Automatic VRAM optimization
 
-## **One More Thing:**
-Adding an extra weight shall being passed as the equivalent of strength_clip in Lora Loader.
-Giving a "_**&lt;lora:CroissantStyle:0.8:0.7&gt;**_" shall patch the unet with 0.8 and patch the text encoder with 0.7. 
+## Installation
+1. Clone or download this repository
+2. Place the `comfyui_WANVideo_lora_tag_loader` folder into your ComfyUI's `custom_nodes` directory
+3. Restart ComfyUI
 
-[Ref: <a href="https://github.com/cloneofsimo/lora#what-happens-to-text-encoder-lora-and-unet-lora">What happens to Text Encoder LoRA and Unet LoRA?</a>]
+## Usage Examples
 
+### LoRA Tag Loader
+```text
+# Basic usage
+<lora:model_name:0.8>
 
-## **Install:**
-To install, drop the "_**comfyui_lora_tag_loader**_" folder into the "_**...\ComfyUI\ComfyUI\custom_nodes**_" directory and restart UI.
+# Multiple LoRAs
+<lora:first_model:0.8> <lora:second_model:0.5>
+
+# Memory efficient loading
+<lora:model_name:0.8> (with low_mem_load enabled)
+```
+
+### Dynamic Text Encoder
+```text
+# Basic weighted prompts
+(beautiful:1.2) (detailed:1.3) landscape
+
+# Multiple positive prompts
+(beautiful:1.2) landscape | (detailed:1.3) scenery
+
+# With negative prompt
+Negative: blurry, low quality
+```
+
+## Requirements
+- ComfyUI
+- WAN Video extension
+- Civitai API key (optional, for automatic LoRA downloads)
+
+## Configuration
+Set your Civitai API key as an environment variable:
+```bash
+export CIVITAI_API_KEY="your_api_key_here"
+```
+or
+```bash
+export civitai_token="your_api_key_here"
+```
+
+## License
+This project is licensed under the terms included in the LICENSE file.

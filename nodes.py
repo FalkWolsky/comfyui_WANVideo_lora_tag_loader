@@ -100,11 +100,21 @@ class WanVideoLoraTagLoader:
             model = data['items'][0]
             model_version = model['modelVersions'][0]
             model_id = model['id']
-            model_name_safe = model['name'].replace(" ", "_").replace("/", "_")
+            model_name_safe = model['name'].lower()
+            model_name_safe = re.sub(r'\s+', '-', model_name_safe)
+            model_name_safe = re.sub(r'[^a-z0-9-]', '', model_name_safe)
             files = model_version['files']
             safetensor = next((f for f in files if f['name'].endswith(".safetensors")), None)
             if safetensor is None:
                 return None
+
+            # Save metadata file
+            metadata_filename = f"{model_id}.civitai.metadata.json"
+            metadata_path = Path(lora_dir) / metadata_filename
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                import json
+                json.dump(model, f, indent=2)
+            print(f"[WanVideoLoraTagLoader] Saved metadata to {metadata_path}")
 
             # Use sanitized model name for filename
             filename = f"{model_id}_{model_name_safe}.safetensors"
